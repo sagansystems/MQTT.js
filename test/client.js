@@ -416,5 +416,46 @@ describe('MqttClient', function () {
 
       client.subscribe('hello')
     })
+
+    it.only('calls suback callback with error if disconnect before suback', function (done) {
+      var client = mqtt.connect(Object.assign({ reconnectPeriod: 100 }, config))
+      var subscribeCount = 0
+      var connectCount = 0
+
+      server.removeAllListeners('client')
+      server.on('client', function (serverClient) {
+        serverClient.on('connect', function () {
+          connectCount++
+          serverClient.connack({returnCode: 0})
+        })
+
+        serverClient.on('subscribe', function (packet) {
+          subscribeCount++
+          if (subscribeCount === 1) {
+            client.stream.end() // fail on the first subscribe before sending suback
+          } else {
+            // succeed on the second try (on the resubscribe on reconnect)
+            serverClient.suback({
+              messageId: packet.messageId,
+              granted: packet.subscriptions.map(function (e) {
+                return e.qos
+              })
+            })
+          }
+        })
+      })
+
+      client.subscribe('hello', function (error) {
+        // should the callback return an error
+        should.exist(error)
+
+        // or should it return success after the reconnect resubscribe?
+        connectCount.should.equal(2)
+        subscribeCount.should.equal(2)
+
+        // right now it never gets called
+        client.end(true, done)
+      })
+    })
   })
 })
